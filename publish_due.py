@@ -95,7 +95,7 @@ def publish(text, media, reply_to_id=None):
 
 def send(job):
     """카드 하나를 올린다. 예외를 던지지 않고 결과를 돌려준다."""
-    media = [(url, kind) for url, kind in job.get("media", [])]
+    media = [(f["url"], f["kind"]) for f in job.get("files", [])]
     try:
         thread_id = publish(job["text"], media)
     except RuntimeError as e:
@@ -175,8 +175,8 @@ def main():
         (DONE / path.name).write_text(
             json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
         path.unlink()
-        for used in job.get("paths", []):
-            Path(used).unlink(missing_ok=True)
+        for used in job.get("files", []):
+            Path(used["path"]).unlink(missing_ok=True)
         print("%s → %s %s" % (job["id"], result["status"], result["error"] or ""))
 
     if not push("예약 발행 결과"):
