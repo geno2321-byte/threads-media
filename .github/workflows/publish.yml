@@ -1,0 +1,23 @@
+name: 예약 발행
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # 5분마다. 깃허브 사정으로 몇 분 늦을 수 있다.
+  workflow_dispatch:
+
+concurrency: publish-due   # 두 판이 겹쳐 같은 글을 두 번 올리지 않게
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python publish_due.py
+        env:
+          THREADS_TOKEN: ${{ secrets.THREADS_TOKEN }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
