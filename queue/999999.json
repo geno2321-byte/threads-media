@@ -1,0 +1,15 @@
+{
+ "id": 999999,
+ "at": "2026-10-03T16:52",
+ "at_utc": "2026-10-03T07:52",
+ "text": "점검용 글",
+ "comment": "점검용 댓글",
+ "files": [
+  {
+   "url": "https://raw.githubusercontent.com/geno2321-byte/threads-media/main/media/1788421940761100700-_점검용.png",
+   "kind": "image",
+   "path": "media/1788421940761100700-_점검용.png",
+   "sha": "91a99b94e23a00cc8133f22e3fe2a0b48a015808"
+  }
+ ]
+}
