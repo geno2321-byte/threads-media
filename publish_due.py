@@ -1,4 +1,6 @@
-"""깃허브가 5분마다 돌리는 예약 발행 시계. PC가 꺼져 있어도 여기서 글이 올라간다.
+"""깃허브가 5분마다 돌리는 예약 발행 시계. 이 파일은 예약 저장소로 그대로 올라간다.
+
+깃허브가 5분마다 돌리는 예약 발행 시계. PC가 꺼져 있어도 여기서 글이 올라간다.
 
 queue/<글번호>.json 에 예약 카드가 있다. 시각이 지난 카드를 스레드에 올리고
 결과를 done/<글번호>.json 에 적는다. 앱은 켜질 때 done/ 을 읽어 발행 이력에 채운다.
@@ -20,6 +22,9 @@ from pathlib import Path
 API = "https://graph.threads.net/v1.0"
 TOKEN = os.environ.get("THREADS_TOKEN", "")
 USER_ID = os.environ.get("THREADS_USER_ID", "")
+
+# 댓글을 여러 개 담을 때 앱이 쓰는 구분자. app.py·publisher.py의 것과 같아야 한다.
+COMMENT_SEP = chr(30)
 
 QUEUE = Path("queue")
 DOING = Path("doing")
@@ -101,9 +106,13 @@ def send(job):
     except RuntimeError as e:
         return {"status": "실패", "thread_id": None, "permalink": None, "error": str(e)}
 
-    if job.get("comment"):
+    # 댓글이 여러 개면 앞 댓글에 이어 단다. 하나뿐인 옛 카드도 그대로 돈다.
+    last_id = thread_id
+    for one in (job.get("comment") or "").split(COMMENT_SEP):
+        if not one.strip():
+            continue
         try:
-            publish(job["comment"], [], reply_to_id=thread_id)
+            last_id = publish(one, [], reply_to_id=last_id)
         except RuntimeError as e:
             return {"status": "본문만 발행", "thread_id": thread_id, "permalink": None,
                     "error": str(e)}
