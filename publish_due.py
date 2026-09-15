@@ -20,11 +20,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 API = "https://graph.threads.net/v1.0"
-TOKEN = os.environ.get("THREADS_TOKEN", "")
-USER_ID = os.environ.get("THREADS_USER_ID", "")
+
+# 계정마다 열쇠가 따로다. 앱이 THREADS_TOKEN에 {계정번호: 열쇠} 묶음을 넣고, 카드에는 계정번호가 적혀 있다.
+# 예전엔 열쇠 하나만 들어 있어 다른 계정 예약이 마지막에 연결한 계정으로 나갈 수 있었다(260915).
+# 계정번호가 없는 옛 카드는 THREADS_USER_ID 계정으로 본다.
+RAW = os.environ.get("THREADS_TOKEN", "")
+try:
+    KEYS = json.loads(RAW) if RAW.startswith("{") else {}
+except ValueError:
+    KEYS = {}
+
+# 지금 올리는 카드의 계정. 카드마다 _use()가 바꿔 쥔다.
+TOKEN = ""
+USER_ID = ""
 
 # 댓글을 여러 개 담을 때 앱이 쓰는 구분자. app.py·publisher.py의 것과 같아야 한다.
 COMMENT_SEP = chr(30)
+
+# 본문이 막 올라간 직후엔 스레드가 그 글을 아직 모른다며 댓글을 거절한다. 쉬었다 다시 단다.
+# publisher.py의 것과 같게 둔다.
+REPLY_WAITS = (0, 3, 8, 15, 30)
 
 QUEUE = Path("queue")
 DOING = Path("doing")
@@ -98,8 +113,45 @@ def publish(text, media, reply_to_id=None):
     return _call("%s/threads_publish" % USER_ID, {"creation_id": creation_id}, "POST")["id"]
 
 
+def _use(job):
+    """이 카드를 쓴 계정의 열쇠로 바꿔 쥔다."""
+    global TOKEN, USER_ID
+    USER_ID = str(job.get("user_id") or os.environ.get("THREADS_USER_ID", ""))
+    if KEYS:
+        TOKEN = KEYS.get(USER_ID, "")
+    else:
+        # 열쇠가 하나뿐인 옛 비밀값. 그 열쇠 주인 계정의 카드일 때만 쓴다.
+        TOKEN = RAW if USER_ID == os.environ.get("THREADS_USER_ID", "") else ""
+
+
+def _reply(text, reply_to_id):
+    for wait in REPLY_WAITS:
+        time.sleep(wait)
+        try:
+            return publish(text, [], reply_to_id=reply_to_id)
+        except RuntimeError as e:
+            error = e
+            # 연결이 끊긴 거면 올라갔는지 모른다. 두 번 달리지 않게 여기서 멈춘다.
+            if str(e).startswith("스레드에 닿지 못했습니다"):
+                break
+    raise error
+
+
+def _permalink(thread_id):
+    try:
+        return _call(thread_id, {"fields": "permalink"}).get("permalink")
+    except RuntimeError:
+        return None
+
+
 def send(job):
     """카드 하나를 올린다. 예외를 던지지 않고 결과를 돌려준다."""
+    _use(job)
+    if USER_ID and not TOKEN:
+        return {"status": "실패", "thread_id": None, "permalink": None,
+                "error": "이 계정(%s)의 열쇠가 깃허브에 없습니다. 앱 설정에서 [기한 늘리기]를 한 번 눌러 주세요."
+                         % USER_ID}
+
     media = [(f["url"], f["kind"]) for f in job.get("files", [])]
     try:
         thread_id = publish(job["text"], media)
@@ -107,22 +159,20 @@ def send(job):
         return {"status": "실패", "thread_id": None, "permalink": None, "error": str(e)}
 
     # 댓글이 여러 개면 앞 댓글에 이어 단다. 하나뿐인 옛 카드도 그대로 돈다.
-    last_id = thread_id
+    # 막히면 어디까지 달았는지 적어 둔다. 앱의 [댓글 다시 달기]가 거기서부터 잇는다.
+    last_id, done = thread_id, 0
     for one in (job.get("comment") or "").split(COMMENT_SEP):
         if not one.strip():
             continue
         try:
-            last_id = publish(one, [], reply_to_id=last_id)
+            last_id = _reply(one, last_id)
         except RuntimeError as e:
-            return {"status": "본문만 발행", "thread_id": thread_id, "permalink": None,
-                    "error": str(e)}
+            return {"status": "본문만 발행", "thread_id": thread_id, "permalink": _permalink(thread_id),
+                    "error": str(e), "reply_to": last_id, "replied": done}
+        done += 1
 
-    permalink = None
-    try:
-        permalink = _call(thread_id, {"fields": "permalink"}).get("permalink")
-    except RuntimeError:
-        pass
-    return {"status": "발행완료", "thread_id": thread_id, "permalink": permalink, "error": None}
+    return {"status": "발행완료", "thread_id": thread_id, "permalink": _permalink(thread_id),
+            "error": None}
 
 
 def git(*args, check=True):
@@ -159,8 +209,8 @@ def claim(paths):
 
 
 def main():
-    if not TOKEN or not USER_ID:
-        sys.exit("THREADS_TOKEN·THREADS_USER_ID 비밀값이 없습니다.")
+    if not RAW:
+        sys.exit("THREADS_TOKEN 비밀값이 없습니다.")
 
     due = []
     for path in sorted(QUEUE.glob("*.json")):
